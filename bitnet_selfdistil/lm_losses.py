@@ -38,7 +38,7 @@ def _lm_losses(teacher: CausalLMOutput, student: CausalLMOutput, max_full_losses
         if student.logits.shape[0] * student.logits.shape[1] <= max_full_losses_length:
             losses = dict(losses, **_additional_losses())
         loss = 0
-        for loss_value in losses.values():
+        for _, loss_value in losses.items():
             loss += loss_value
         losses["loss"] = loss
         return losses, loss

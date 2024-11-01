@@ -76,17 +76,25 @@ class BitLinearWithLoRA(nn.Linear):
             else:
                 diff += adapter_diff
         return diff
+    
+    def _is_there_adapters(self) -> bool:
+        return len(self.lora_A.keys()) > 0
 
     def get_bitnet_weight(self) -> torch.Tensor:
         with torch.no_grad():
-            W = self.weight + self.get_weight_delta()
+            if self._is_there_adapters():
+                W = self.weight
+            else:
+                W = self.weight + self.get_weight_delta()
             return weight_quant(W)
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         if self.standard_linear:
             W = self.weight
         else:
-            W = self.weight
-            W = W + self.get_weight_delta()
+            if self._is_there_adapters():
+                W = self.weight + self.get_weight_delta()
+            else:
+                W = self.weight
             W = W + (weight_quant(W) - W).detach()
         return F.linear(input, W, self.bias)
