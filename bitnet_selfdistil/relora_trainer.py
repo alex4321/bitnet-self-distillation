@@ -30,19 +30,11 @@ class ReLoRAConfig:
     chunk_warmup_steps: int
     lr_global: Callable[[int], float]
 
-    def get_lambda_lr(self) -> Callable[[int], float]:
-        def _lr(step: int) -> float:
-            k = min((step % self.reset_steps) / self.chunk_warmup_steps, 1.0)
-            lr = self.lr_global(step)
-            return lr * k
-
-        return _lr
-
 
 @dataclass
 class ReLoRAEvents:
-    on_step_end: None | Callable[[int, Optimizer, Dict[str, torch.Tensor], torch.Tensor], None]
-    on_chunk_end: None | Callable[[int, int], StopCondition]
+    on_step_end: None | Callable[["ReloraTrainer", int, Optimizer, Dict[str, torch.Tensor], torch.Tensor], None]
+    on_chunk_end: None | Callable[["ReloraTrainer", int, int], StopCondition]
 
 
 class ReloraTrainer:
@@ -106,7 +98,13 @@ class ReloraTrainer:
         self.patch.train(True)
 
         optimizer = self._optimizer()
-        scheduler = LambdaLR(optimizer, self.relora_config.get_lambda_lr())
+
+        def _lambda_lr(step: int) -> float:
+            lr_global = self.relora_config.lr_global(step + start_step)
+            chunk_warmup_k = min(1.0, step / self.relora_config.chunk_warmup_steps)
+            return lr_global * chunk_warmup_k
+
+        scheduler = LambdaLR(optimizer, _lambda_lr)
 
         for i, batch in enumerate(batches):
             batch = self._move_batch(batch)
@@ -124,7 +122,7 @@ class ReloraTrainer:
             logger.debug("Step %d, loss=%f", start_step + i, loss.item())
 
             if self.events.on_step_end is not None:
-                self.events.on_step_end(start_step + i, optimizer, loss_components, loss)
+                self.events.on_step_end(self, start_step + i, optimizer, loss_components, loss)
 
         optimizer.zero_grad(set_to_none=True)
         logger.info("Completed training on chunk %d", index)
@@ -180,7 +178,7 @@ class ReloraTrainer:
                 if self.checkpoint_directory is not None:
                     self._save_checkpoint(i, step, self.checkpoint_directory)
                 if self.events.on_chunk_end is not None:
-                    stop_condition = self.events.on_chunk_end(i, step)
+                    stop_condition = self.events.on_chunk_end(self, i, step)
                     if stop_condition == StopCondition.STOP:
                         logger.info("Training stopped at chunk %d, step %d by stop condition", i, step)
                         break
